@@ -5,7 +5,7 @@ const MODULE_NAME = "force_inject_jump";
 
 const defaultSettings = {
     enabled: true,
-    delayMs: 700,
+    delayMs: 300,
 };
 
 function getSettings() {
@@ -21,30 +21,48 @@ function getSettings() {
     return extension_settings[MODULE_NAME];
 }
 
-function buildCommand() {
-    const settings = getSettings();
-    const delay = Math.max(0, parseInt(settings.delayMs, 10) || 0);
-    return `/delay ${delay} | /chat-jump {{lastMessageId}}`;
+// 채팅창 안에서 mesid가 가장 큰(=가장 마지막) 메시지 엘리먼트를 찾음
+function getLastMessageElement() {
+    const chat = document.getElementById("chat");
+    if (!chat) return null;
+    const messages = chat.querySelectorAll(".mes[mesid]");
+    if (!messages.length) return null;
+    return messages[messages.length - 1];
 }
 
-function injectToInput() {
+function scrollToLastMessageStart() {
     const settings = getSettings();
     if (!settings.enabled) return;
 
-    const textarea = document.getElementById("send_textarea");
-    if (!textarea) return;
+    const el = getLastMessageElement();
+    if (!el) return;
 
-    textarea.value = buildCommand();
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    // 메시지 상단이 화면 위쪽에 오도록 스크롤 (block: "start")
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function scheduleScroll() {
+    const settings = getSettings();
+    const delay = Math.max(0, parseInt(settings.delayMs, 10) || 0);
+    // 스트리밍/렌더링이 끝난 뒤 DOM이 안정되도록 약간의 딜레이
+    setTimeout(scrollToLastMessageStart, delay);
 }
 
 function bindEvents() {
-    // 채팅 전환 / 새 채팅 생성 시 자동 주입
-    eventSource.on(event_types.CHAT_CHANGED, injectToInput);
-
-    // 버전에 따라 이 이벤트가 없을 수 있어 존재 여부 체크 후 바인딩
-    if (event_types.NEW_CHAT_CREATED) {
-        eventSource.on(event_types.NEW_CHAT_CREATED, injectToInput);
+    // 새 AI 메시지 수신 시
+    if (event_types.MESSAGE_RECEIVED) {
+        eventSource.on(event_types.MESSAGE_RECEIVED, scheduleScroll);
+    }
+    // 스와이프로 답장이 바뀔 때
+    if (event_types.MESSAGE_SWIPED) {
+        eventSource.on(event_types.MESSAGE_SWIPED, scheduleScroll);
+    }
+    // 스트리밍 종료 시점이 따로 있는 버전 대비 (있으면 더 정확한 타이밍)
+    if (event_types.GENERATION_ENDED) {
+        eventSource.on(event_types.GENERATION_ENDED, scheduleScroll);
+    }
+    if (event_types.CHARACTER_MESSAGE_RENDERED) {
+        eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, scheduleScroll);
     }
 }
 
@@ -65,7 +83,7 @@ function renderSettingsHtml() {
                 <label for="fij_delay">딜레이 (ms)</label>
                 <input id="fij_delay" type="number" min="0" step="50" value="${settings.delayMs}" class="text_pole" />
                 <div class="fij_hint" style="opacity:0.7; font-size: 0.85em; margin-top: 4px;">
-                    채팅 전환/새 채팅 생성 시 입력창에 자동으로 <code>/delay N | /chat-jump {{lastMessageId}}</code> 를 주입합니다.
+                    AI 응답(스와이프 포함) 발생 시, 매크로/QR 없이 마지막 메시지 시작 부분으로 자동 스크롤합니다.
                 </div>
             </div>
         </div>
